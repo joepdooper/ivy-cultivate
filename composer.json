@@ -13,5 +13,5 @@
   },
   "bin": [
     "bin/watch-assets.php"
-  ],
+  ]
 }

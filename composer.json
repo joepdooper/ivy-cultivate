@@ -12,6 +12,6 @@
     }
   },
   "bin": [
-    "bin/watch-assets.php"
+    "bin/ivy"
   ]
 }

@@ -1,25 +1,43 @@
 <?php
-namespace Ivy\Cultivate\Command;
+namespace Ivy\Cultivate\Console;
 
-class WatchAssetsCommand
+class Application
 {
-    public function run(): void
-    {
-        // Your logic here:
-        // 1. Fetch base template folder from DB
-        // 2. Change directory
-        // 3. Run npx tailwindcss CLI using proc_open, shell_exec, or symfony/process
-        echo "Running tailwind watcher...\n";
+    private array $commands = [];
 
-        // Example (simple):
-        $baseFolder = $this->getBaseTemplateFolder();
-        chdir($baseFolder);
-        passthru('npx @tailwindcss/cli -i css/input.css -o css/output.css --watch');
+    public function __construct()
+    {
+        // Register commands here
+        $this->commands['watch'] = new WatchCommand();
     }
 
-    private function getBaseTemplateFolder(): string
+    public function run(): void
     {
-        // Replace with actual DB query or config read
-        return '/path/to/your/template/base';
+        global $argv;
+
+        if (!isset($argv[1])) {
+            $this->printUsage();
+            exit(1);
+        }
+
+        $commandName = $argv[1];
+
+        if (!isset($this->commands[$commandName])) {
+            echo "Unknown command: $commandName\n";
+            $this->printUsage();
+            exit(1);
+        }
+
+        $command = $this->commands[$commandName];
+        $command->execute(array_slice($argv, 2));
+    }
+
+    private function printUsage(): void
+    {
+        echo "Usage: ivy-cultivate <command>\n";
+        echo "Available commands:\n";
+        foreach ($this->commands as $name => $command) {
+            echo "  - $name\n";
+        }
     }
 }

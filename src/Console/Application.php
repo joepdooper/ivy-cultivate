@@ -1,6 +1,8 @@
 <?php
 namespace Ivy\Cultivate\Console;
 
+use Ivy\Cultivate\Command\WatchAssetsCommand;
+
 class Application
 {
     private array $commands = [];
@@ -8,7 +10,7 @@ class Application
     public function __construct()
     {
         // Register commands here
-        $this->commands['watch'] = new WatchCommand();
+        $this->commands['watch'] = new WatchAssetsCommand();
     }
 
     public function run(): void

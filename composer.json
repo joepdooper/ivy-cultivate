@@ -3,15 +3,12 @@
   "description": "A set of CLI tools to build and extend development in ivy",
   "type": "library",
   "license": "MIT",
-  "require": {
-    "php": ">=8.2.0"
-  },
   "autoload": {
     "psr-4": {
       "Ivy\\Cultivate\\": "src/"
     }
   },
   "bin": [
-    "bin/ivy"
+    "bin/cultivate"
   ]
 }

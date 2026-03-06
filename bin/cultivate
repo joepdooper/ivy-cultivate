@@ -1,0 +1,157 @@
+#!/bin/bash
+
+set -e
+
+########################################
+# Configuration
+########################################
+
+COMPOSE_FILE="./docker/docker-compose.yml"
+BASE_URL="http://localhost"
+PORTS=(
+  ${SERVER_PORT:-8080}
+  ${DB_PORT:-3306}
+  ${VITE_PORT:-5173}
+  1080
+  ${MAIL_PORT:-1025}
+)
+CONTAINERS=(
+  "${APACHE_HOST:-ivy_apache}"
+  "${DB_HOST:-ivy_mysql}"
+  "${NODE_HOST:-ivy_node}"
+  "${MAIL_HOST:-ivy_mailcatcher}"
+)
+
+GREEN="\033[0;32m"
+YELLOW="\033[0;33m"
+RESET="\033[0m"
+
+########################################
+# UX Helper
+########################################
+
+finish_status() {
+  echo -e "${GREEN}[✔] $1${RESET}"
+}
+
+########################################
+# Load .env
+########################################
+
+if [ -f .env ]; then
+  export $(grep -v '^#' .env | xargs)
+fi
+
+if [ "${APP_ENV}" != "development" ]; then
+  echo "This script can only run in a development environment."
+  exit 1
+fi
+
+########################################
+# Docker or Podman availability check
+########################################
+
+if command -v docker >/dev/null 2>&1; then
+    if docker compose version >/dev/null 2>&1; then
+        COMPOSE_CMD="docker compose"
+    else
+        COMPOSE_CMD="docker-compose"
+    fi
+elif command -v podman >/dev/null 2>&1; then
+    if podman compose version >/dev/null 2>&1; then
+        COMPOSE_CMD="podman compose"
+    else
+        COMPOSE_CMD="podman-compose"
+    fi
+else
+    echo "Neither Docker nor Podman is installed."
+    exit 1
+fi
+
+########################################
+# Port Checks
+########################################
+
+PORT_CONFLICTS=()
+
+for PORT in "${PORTS[@]}"; do
+  if lsof -i :"$PORT" >/dev/null 2>&1; then
+    PORT_CONFLICTS+=("$PORT")
+  fi
+done
+
+if [ ${#PORT_CONFLICTS[@]} -ne 0 ]; then
+  echo "The following ports are already in use:"
+  echo ""
+  for PORT in "${PORT_CONFLICTS[@]}"; do
+    echo " :$PORT"
+  done
+  echo ""
+  exit 1
+fi
+
+finish_status "Required ports available"
+
+########################################
+# Start Containers
+########################################
+
+$COMPOSE_CMD -f "$COMPOSE_FILE" up -d
+
+########################################
+# Wait for containers
+########################################
+
+wait_for_containers() {
+  local containers=("$@")
+
+  local max_len=0
+  for c in "${containers[@]}"; do
+    (( ${#c} > max_len )) && max_len=${#c}
+  done
+
+  local col_width=$((max_len + 2))
+
+  for container in "${containers[@]}"; do
+    printf "${YELLOW} ⠿ Container %-*s%-7s${RESET}\r" \
+      "$col_width" "$container" "Waiting"
+
+    until [ "$(docker inspect -f '{{.State.Running}}' "$container" 2>/dev/null)" = "true" ]; do
+      sleep 0.2
+    done
+
+    printf "\r\033[2K"
+    printf "${GREEN} ⠿ Container %-*s%-7s${RESET}\n" \
+      "$col_width" "$container" "Ready"
+  done
+}
+
+wait_for_containers "${CONTAINERS[@]}"
+
+########################################
+# Node Setup
+########################################
+
+if ! docker compose -f "$COMPOSE_FILE" exec -T node test -d node_modules; then
+  docker compose -f "$COMPOSE_FILE" run --rm node npm install
+fi
+
+finish_status "Node dependencies ready"
+
+########################################
+# Start Dev Server
+########################################
+
+docker compose -f "$COMPOSE_FILE" exec -d node npm run dev -- --host 0.0.0.0
+
+finish_status "Vite dev server running"
+
+########################################
+# Output URLs
+########################################
+
+echo ""
+echo "Mailcatcher:      ${BASE_URL}:1080"
+echo "Vite Dev Server:  ${BASE_URL}:${VITE_PORT:-5173}"
+echo "Application:      ${BASE_URL}:${SERVER_PORT:-8080}"
+echo ""

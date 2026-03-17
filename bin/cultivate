@@ -75,7 +75,7 @@ fi
 PORT_CONFLICTS=()
 
 for PORT in "${PORTS[@]}"; do
-  if lsof -i :"$PORT" >/dev/null 2>&1; then
+  if lsof -iTCP:"$PORT" -sTCP:LISTEN >/dev/null 2>&1; then
     PORT_CONFLICTS+=("$PORT")
   fi
 done

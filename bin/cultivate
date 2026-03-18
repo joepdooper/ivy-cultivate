@@ -68,6 +68,7 @@ else
     exit 1
 fi
 
+run_dev() {
 ########################################
 # Port Checks
 ########################################
@@ -155,3 +156,68 @@ echo "Mailcatcher:      ${BASE_URL}:1080"
 echo "Vite Dev Server:  ${BASE_URL}:${VITE_PORT:-5173}"
 echo "Application:      ${BASE_URL}:${SERVER_PORT:-8080}"
 echo ""
+}
+
+run_build() {
+  echo "Building frontend assets..."
+
+  # Ensure containers are running (optional but nice)
+  $COMPOSE_CMD -f "$COMPOSE_FILE" up -d node
+
+  # Install deps if needed
+  if ! $COMPOSE_CMD -f "$COMPOSE_FILE" exec -T node test -d node_modules; then
+    $COMPOSE_CMD -f "$COMPOSE_FILE" run --rm node npm install
+  fi
+
+  # Run production build
+  $COMPOSE_CMD -f "$COMPOSE_FILE" exec -T node npm run build
+
+  finish_status "Assets built"
+
+  ########################################
+  # Copy build output
+  ########################################
+
+  # Adjust paths depending on your setup
+  BUILD_DIR="resources/dist"
+  PUBLIC_DIR="public/assets"
+
+  if [ ! -d "$BUILD_DIR" ]; then
+    echo "Build directory not found: $BUILD_DIR"
+    exit 1
+  fi
+
+  rm -rf "$PUBLIC_DIR"
+  mkdir -p "$PUBLIC_DIR"
+
+  cp -r "$BUILD_DIR"/* "$PUBLIC_DIR"/
+
+  finish_status "Assets copied to public folder"
+}
+
+########################################
+# Command Dispatcher
+########################################
+
+COMMAND=$1
+[ -z "$COMMAND" ] && COMMAND="run"
+
+case "$COMMAND" in
+  run)
+    run_dev
+    ;;
+  build)
+    run_build
+    ;;
+  stop)
+    $COMPOSE_CMD -f "$COMPOSE_FILE" down
+    ;;
+  restart)
+    $COMPOSE_CMD -f "$COMPOSE_FILE" down
+    run_dev
+    ;;
+  *)
+    echo "Usage: $0 {run|build|stop|restart}"
+    exit 1
+    ;;
+esac

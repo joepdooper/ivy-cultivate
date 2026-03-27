@@ -1,6 +1,7 @@
 #!/bin/bash
 
 set -e
+trap 'echo -e "Error on line $LINENO"' ERR
 
 ########################################
 # Configuration
@@ -31,7 +32,7 @@ RESET="\033[0m"
 ########################################
 
 finish_status() {
-  echo -e "${GREEN}[✔] $1${RESET}"
+  echo -e "${GREEN}[✓] $1${RESET}"
 }
 
 ########################################
@@ -39,7 +40,12 @@ finish_status() {
 ########################################
 
 if [ -f .env ]; then
-  export $(grep -v '^#' .env | xargs)
+  while IFS='=' read -r key value; do
+    [[ -z "$key" || "$key" =~ ^# ]] && continue
+    value="${value%\"}"
+    value="${value#\"}"
+    export "$key=$value"
+  done < .env
 fi
 
 if [ "${APP_ENV}" != "development" ]; then
@@ -48,7 +54,7 @@ if [ "${APP_ENV}" != "development" ]; then
 fi
 
 ########################################
-# Docker or Podman availability check
+# Docker or Podman detection
 ########################################
 
 if command -v docker >/dev/null 2>&1; then
@@ -68,131 +74,162 @@ else
     exit 1
 fi
 
+########################################
+# Dev Runner
+########################################
+
 run_dev() {
-########################################
-# Port Checks
-########################################
 
-PORT_CONFLICTS=()
+  ########################################
+  # Port Checks
+  ########################################
 
-for PORT in "${PORTS[@]}"; do
-  if lsof -iTCP:"$PORT" -sTCP:LISTEN >/dev/null 2>&1; then
-    PORT_CONFLICTS+=("$PORT")
+  PORT_CONFLICTS=()
+
+  for PORT in "${PORTS[@]}"; do
+    if lsof -iTCP:"$PORT" -sTCP:LISTEN >/dev/null 2>&1; then
+      PORT_CONFLICTS+=("$PORT")
+    fi
+  done
+
+  if [ ${#PORT_CONFLICTS[@]} -ne 0 ]; then
+    echo "The following ports are already in use:"
+    echo ""
+    for PORT in "${PORT_CONFLICTS[@]}"; do
+      echo " :$PORT"
+    done
+    echo ""
+    exit 1
   fi
-done
 
-if [ ${#PORT_CONFLICTS[@]} -ne 0 ]; then
-  echo "The following ports are already in use:"
-  echo ""
-  for PORT in "${PORT_CONFLICTS[@]}"; do
-    echo " :$PORT"
-  done
-  echo ""
-  exit 1
-fi
+  finish_status "Required ports available"
 
-finish_status "Required ports available"
+  ########################################
+  # Start Containers
+  ########################################
 
-########################################
-# Start Containers
-########################################
+  $COMPOSE_CMD -f "$COMPOSE_FILE" up -d
 
-$COMPOSE_CMD -f "$COMPOSE_FILE" up -d
+  ########################################
+  # Wait for containers
+  ########################################
 
-########################################
-# Wait for containers
-########################################
+  wait_for_containers() {
+    local containers=("$@")
 
-wait_for_containers() {
-  local containers=("$@")
-
-  local max_len=0
-  for c in "${containers[@]}"; do
-    (( ${#c} > max_len )) && max_len=${#c}
-  done
-
-  local col_width=$((max_len + 2))
-
-  for container in "${containers[@]}"; do
-    printf "${YELLOW} ⠿ Container %-*s%-7s${RESET}\r" \
-      "$col_width" "$container" "Waiting"
-
-    until [ "$(docker inspect -f '{{.State.Running}}' "$container" 2>/dev/null)" = "true" ]; do
-      sleep 0.2
+    local max_len=0
+    for c in "${containers[@]}"; do
+      (( ${#c} > max_len )) && max_len=${#c}
     done
 
-    printf "\r\033[2K"
-    printf "${GREEN} ⠿ Container %-*s%-7s${RESET}\n" \
-      "$col_width" "$container" "Ready"
-  done
-}
+    local col_width=$((max_len + 2))
 
-wait_for_containers "${CONTAINERS[@]}"
+    for container in "${containers[@]}"; do
+      printf "${YELLOW} ⠿ Container %-*s%-7s${RESET}\r" \
+        "$col_width" "$container" "Waiting"
 
-########################################
-# Node Setup
-########################################
+      until [ "$($COMPOSE_CMD -f "$COMPOSE_FILE" ps -q "$container" | xargs docker inspect -f '{{.State.Running}}' 2>/dev/null)" = "true" ]; do
+        sleep 0.2
+      done
 
-if ! docker compose -f "$COMPOSE_FILE" exec -T node test -d node_modules; then
-  docker compose -f "$COMPOSE_FILE" run --rm node npm install
-fi
+      printf "\r\033[2K"
+      printf "${GREEN} ⠿ Container %-*s%-7s${RESET}\n" \
+        "$col_width" "$container" "Ready"
+    done
+  }
 
-finish_status "Node dependencies ready"
+  wait_for_containers "${CONTAINERS[@]}"
 
-########################################
-# Start Dev Server
-########################################
+  ########################################
+  # Node Setup (uses running container)
+  ########################################
 
-docker compose -f "$COMPOSE_FILE" exec -d node npm run dev -- --host 0.0.0.0
-
-finish_status "Vite dev server running"
-
-########################################
-# Output URLs
-########################################
-
-echo ""
-echo "Mailcatcher:      ${BASE_URL}:1080"
-echo "Vite Dev Server:  ${BASE_URL}:${VITE_PORT:-5173}"
-echo "Application:      ${BASE_URL}:${SERVER_PORT:-8080}"
-echo ""
-}
-
-run_build() {
-  echo "Building frontend assets..."
-
-  # Ensure containers are running (optional but nice)
-  $COMPOSE_CMD -f "$COMPOSE_FILE" up -d node
-
-  # Install deps if needed
   if ! $COMPOSE_CMD -f "$COMPOSE_FILE" exec -T node test -d node_modules; then
     $COMPOSE_CMD -f "$COMPOSE_FILE" run --rm node npm install
   fi
 
-  # Run production build
-  $COMPOSE_CMD -f "$COMPOSE_FILE" exec -T node npm run build
-
-  finish_status "Assets built"
+  finish_status "Node dependencies ready"
 
   ########################################
-  # Copy build output
+  # Start Dev Server
   ########################################
 
-  # Adjust paths depending on your setup
-  BUILD_DIR="resources/dist"
-  PUBLIC_DIR="public/assets"
+  $COMPOSE_CMD -f "$COMPOSE_FILE" exec -d node npm run dev -- --host 0.0.0.0
 
-  if [ ! -d "$BUILD_DIR" ]; then
-    echo "Build directory not found: $BUILD_DIR"
-    exit 1
+  finish_status "Vite dev server running"
+
+  ########################################
+  # Output URLs
+  ########################################
+
+  echo ""
+  echo "Mailcatcher:      ${BASE_URL}:1080"
+  echo "Vite Dev Server:  ${BASE_URL}:${VITE_PORT:-5173}"
+  echo "Application:      ${BASE_URL}:${SERVER_PORT:-8080}"
+  echo ""
+}
+
+########################################
+# Build Runner (fully independent)
+########################################
+
+run_build() {
+
+  ENTRY_FILE=".build/vite-entries.json"
+
+  mkdir -p .build
+
+  ########################################
+  # Generate Vite entries
+  ########################################
+
+  echo "{" > "$ENTRY_FILE"
+  FIRST=true
+
+  while IFS= read -r file; do
+      name="$file"
+
+      if [ "$FIRST" = true ]; then
+          FIRST=false
+      else
+          echo "," >> "$ENTRY_FILE"
+      fi
+
+      json_name=$(printf '%s' "$name" | sed 's/\\/\\\\/g; s/"/\\"/g')
+      json_file=$(printf '%s' "$file" | sed 's/\\/\\\\/g; s/"/\\"/g')
+
+      echo "  \"$json_name\": \"$json_file\"" >> "$ENTRY_FILE"
+
+  done < <(find plugins templates -type f \( -name "*.js" -o -name "*.css" \) ! -path "*/node_modules/*" | sort)
+
+  echo "}" >> "$ENTRY_FILE"
+
+  finish_status "Vite entries generated"
+
+  ########################################
+  # Node dependencies
+  ########################################
+
+  if ! $COMPOSE_CMD -f "$COMPOSE_FILE" run --rm node test -d node_modules; then
+    $COMPOSE_CMD -f "$COMPOSE_FILE" run --rm node npm install
   fi
 
-  rm -rf "$PUBLIC_DIR"
-  mkdir -p "$PUBLIC_DIR"
+  finish_status "Node dependencies ready"
 
-  cp -r "$BUILD_DIR"/* "$PUBLIC_DIR"/
+  ########################################
+  # Run Vite build
+  ########################################
 
-  finish_status "Assets copied to public folder"
+  $COMPOSE_CMD -f "$COMPOSE_FILE" run --rm node npm run build
+
+  finish_status "JS & CSS built successfully"
+
+  ########################################
+  # Cleanup
+  ########################################
+
+  rm -rf .build
+  finish_status ".build folder removed"
 }
 
 ########################################

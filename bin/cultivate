@@ -9,6 +9,7 @@ trap 'echo -e "Error on line $LINENO"' ERR
 
 COMPOSE_FILE="./docker/docker-compose.yml"
 BASE_URL="http://localhost"
+
 PORTS=(
   ${SERVER_PORT:-8080}
   ${DB_PORT:-3306}
@@ -16,12 +17,15 @@ PORTS=(
   1080
   ${MAIL_PORT:-1025}
 )
+
 CONTAINERS=(
   "${APACHE_HOST:-ivy_apache}"
   "${DB_HOST:-ivy_mysql}"
   "${NODE_HOST:-ivy_node}"
   "${MAIL_HOST:-ivy_mailcatcher}"
 )
+
+NODE_CONTAINER="${NODE_HOST:-ivy_node}"
 
 GREEN="\033[0;32m"
 YELLOW="\033[0;33m"
@@ -54,35 +58,66 @@ if [ "${APP_ENV}" != "development" ]; then
 fi
 
 ########################################
-# Docker or Podman detection
+# Engine Detection (Docker / Podman)
 ########################################
 
 if command -v docker >/dev/null 2>&1; then
-    if docker compose version >/dev/null 2>&1; then
-        COMPOSE_CMD="docker compose"
-    else
-        COMPOSE_CMD="docker-compose"
-    fi
+  ENGINE="docker"
 elif command -v podman >/dev/null 2>&1; then
-    if podman compose version >/dev/null 2>&1; then
-        COMPOSE_CMD="podman compose"
-    else
-        COMPOSE_CMD="podman-compose"
-    fi
+  ENGINE="podman"
 else
-    echo "Neither Docker nor Podman is installed."
-    exit 1
+  echo "Neither Docker nor Podman is installed."
+  exit 1
+fi
+
+# Compose command detection
+if $ENGINE compose version >/dev/null 2>&1; then
+  COMPOSE_CMD="$ENGINE compose"
+else
+  COMPOSE_CMD="$ENGINE-compose"
 fi
 
 ########################################
-# Dev Runner
+# Container Helpers
 ########################################
 
-run_dev() {
+is_container_running() {
+  $ENGINE inspect -f '{{.State.Running}}' "$1" 2>/dev/null | grep -q true
+}
 
-  ########################################
-  # Port Checks
-  ########################################
+wait_for_containers() {
+  local containers=("$@")
+
+  local max_len=0
+  for c in "${containers[@]}"; do
+    (( ${#c} > max_len )) && max_len=${#c}
+  done
+
+  local col_width=$((max_len + 2))
+
+  for container in "${containers[@]}"; do
+    printf "${YELLOW} ⠿ Container %-*s%-7s${RESET}\r" \
+      "$col_width" "$container" "Waiting"
+
+    until is_container_running "$container"; do
+      sleep 0.2
+    done
+
+    printf "\r\033[2K"
+    printf "${GREEN} ⠿ Container %-*s%-7s${RESET}\n" \
+      "$col_width" "$container" "Ready"
+  done
+}
+
+########################################
+# Port Checks
+########################################
+
+check_ports() {
+  if ! command -v lsof >/dev/null 2>&1; then
+    echo "Warning: lsof not installed, skipping port checks"
+    return
+  fi
 
   PORT_CONFLICTS=()
 
@@ -103,6 +138,39 @@ run_dev() {
   fi
 
   finish_status "Required ports available"
+}
+
+########################################
+# Node Helpers (EXEC ONLY)
+########################################
+
+node_exec() {
+  $ENGINE exec -i "$NODE_CONTAINER" "$@"
+}
+
+node_exec_bg() {
+  $ENGINE exec -d "$NODE_CONTAINER" "$@"
+}
+
+setup_node() {
+  if ! node_exec test -d node_modules; then
+    node_exec npm install
+  fi
+
+  finish_status "Node dependencies ready"
+}
+
+########################################
+# Dev Runner
+########################################
+
+run_dev() {
+
+  ########################################
+  # Ports
+  ########################################
+
+  check_ports
 
   ########################################
   # Start Containers
@@ -111,50 +179,22 @@ run_dev() {
   $COMPOSE_CMD -f "$COMPOSE_FILE" up -d
 
   ########################################
-  # Wait for containers
+  # Wait for Containers
   ########################################
-
-  wait_for_containers() {
-    local containers=("$@")
-
-    local max_len=0
-    for c in "${containers[@]}"; do
-      (( ${#c} > max_len )) && max_len=${#c}
-    done
-
-    local col_width=$((max_len + 2))
-
-    for container in "${containers[@]}"; do
-      printf "${YELLOW} ⠿ Container %-*s%-7s${RESET}\r" \
-        "$col_width" "$container" "Waiting"
-
-      until [ "$($COMPOSE_CMD -f "$COMPOSE_FILE" ps -q "$container" | xargs docker inspect -f '{{.State.Running}}' 2>/dev/null)" = "true" ]; do
-        sleep 0.2
-      done
-
-      printf "\r\033[2K"
-      printf "${GREEN} ⠿ Container %-*s%-7s${RESET}\n" \
-        "$col_width" "$container" "Ready"
-    done
-  }
 
   wait_for_containers "${CONTAINERS[@]}"
 
   ########################################
-  # Node Setup (uses running container)
+  # Node Setup
   ########################################
 
-  if ! $COMPOSE_CMD -f "$COMPOSE_FILE" exec -T node test -d node_modules; then
-    $COMPOSE_CMD -f "$COMPOSE_FILE" run --rm node npm install
-  fi
-
-  finish_status "Node dependencies ready"
+  setup_node
 
   ########################################
-  # Start Dev Server
+  # Start Vite
   ########################################
 
-  $COMPOSE_CMD -f "$COMPOSE_FILE" exec -d node npm run dev -- --host 0.0.0.0
+  node_exec_bg npm run dev -- --host 0.0.0.0
 
   finish_status "Vite dev server running"
 
@@ -170,7 +210,7 @@ run_dev() {
 }
 
 ########################################
-# Build Runner (fully independent)
+# Build Runner
 ########################################
 
 run_build() {
@@ -180,25 +220,23 @@ run_build() {
   mkdir -p .build
 
   ########################################
-  # Generate Vite entries
+  # Generate entries
   ########################################
 
   echo "{" > "$ENTRY_FILE"
   FIRST=true
 
   while IFS= read -r file; do
-      name="$file"
+    if [ "$FIRST" = true ]; then
+      FIRST=false
+    else
+      echo "," >> "$ENTRY_FILE"
+    fi
 
-      if [ "$FIRST" = true ]; then
-          FIRST=false
-      else
-          echo "," >> "$ENTRY_FILE"
-      fi
+    json_name=$(printf '%s' "$file" | sed 's/\\/\\\\/g; s/"/\\"/g')
+    json_file="$json_name"
 
-      json_name=$(printf '%s' "$name" | sed 's/\\/\\\\/g; s/"/\\"/g')
-      json_file=$(printf '%s' "$file" | sed 's/\\/\\\\/g; s/"/\\"/g')
-
-      echo "  \"$json_name\": \"$json_file\"" >> "$ENTRY_FILE"
+    echo "  \"$json_name\": \"$json_file\"" >> "$ENTRY_FILE"
 
   done < <(find plugins templates -type f \( -name "*.js" -o -name "*.css" \) ! -path "*/node_modules/*" | sort)
 
@@ -207,20 +245,23 @@ run_build() {
   finish_status "Vite entries generated"
 
   ########################################
-  # Node dependencies
+  # Ensure containers running
   ########################################
 
-  if ! $COMPOSE_CMD -f "$COMPOSE_FILE" run --rm node test -d node_modules; then
-    $COMPOSE_CMD -f "$COMPOSE_FILE" run --rm node npm install
-  fi
-
-  finish_status "Node dependencies ready"
+  $COMPOSE_CMD -f "$COMPOSE_FILE" up -d
+  wait_for_containers "${CONTAINERS[@]}"
 
   ########################################
-  # Run Vite build
+  # Node Setup
   ########################################
 
-  $COMPOSE_CMD -f "$COMPOSE_FILE" run --rm node npm run build
+  setup_node
+
+  ########################################
+  # Build
+  ########################################
+
+  node_exec npm run build
 
   finish_status "JS & CSS built successfully"
 
@@ -233,7 +274,7 @@ run_build() {
 }
 
 ########################################
-# Command Dispatcher
+# Commands
 ########################################
 
 COMMAND=$1

@@ -218,60 +218,49 @@ run_dev() {
 
 run_build() {
 
-  mkdir -p .build
+  TARGET=$2
+  if [ -z "$TARGET" ]; then
+    echo "Usage: $0 build {template:name|plugin:name}"
+    exit 1
+  fi
 
-  ########################################
-  # Generate entries
-  ########################################
+  TYPE=$(echo "$TARGET" | cut -d':' -f1)
+  NAME=$(echo "$TARGET" | cut -d':' -f2)
 
-  echo "{" > "$ENTRY_FILE"
-  FIRST=true
+  if [ "$TYPE" = "template" ]; then
+    BASE_PATH="templates/$NAME"
+  elif [ "$TYPE" = "plugin" ]; then
+    BASE_PATH="plugins/$NAME"
+  else
+    echo "Unknown type: $TYPE (use template or plugin)"
+    exit 1
+  fi
 
-  while IFS= read -r file; do
-    if [ "$FIRST" = true ]; then
-      FIRST=false
-    else
-      echo "," >> "$ENTRY_FILE"
-    fi
+  if [ ! -d "$BASE_PATH" ]; then
+    echo "Path not found: $BASE_PATH"
+    exit 1
+  fi
 
-    json_name=$(printf '%s' "$file" | sed 's/\\/\\\\/g; s/"/\\"/g')
-    json_file="$json_name"
+  DIST_PATH="$BASE_PATH/dist"
 
-    echo "  \"$json_name\": \"$json_file\"" >> "$ENTRY_FILE"
+  # Remove old dist folder
+  if [ -d "$DIST_PATH" ]; then
+    rm -rf "$DIST_PATH"
+    finish_status "Old dist folder removed for $TARGET"
+  fi
+  mkdir -p "$DIST_PATH"
 
-  done < <(find plugins templates -type f \( -name "*.js" -o -name "*.css" \) ! -path "*/node_modules/*" | sort)
-
-  echo "}" >> "$ENTRY_FILE"
-
-  finish_status "Vite entries generated"
-
-  ########################################
-  # Ensure containers running
-  ########################################
-
-  $COMPOSE_CMD -f "$COMPOSE_FILE" up -d
-  wait_for_containers "${CONTAINERS[@]}"
-
-  ########################################
-  # Node Setup
-  ########################################
-
+  # Ensure Node dependencies
   setup_node
 
   ########################################
-  # Build
+  # Build CSS entries individually (Tailwind processed)
   ########################################
-
-  node_exec npm run build
-
-  finish_status "JS & CSS built successfully"
-
-  ########################################
-  # Cleanup
-  ########################################
-
-  rm -rf .build
-  finish_status ".build folder removed"
+  $ENGINE exec -i \
+    -e BUILD_PATH="$BASE_PATH" \
+    "$NODE_CONTAINER" \
+    npx vite build
+  finish_status "CSS files built and processed for $TARGET"
 }
 
 ########################################
@@ -344,6 +333,7 @@ run_package() {
 ########################################
 
 COMMAND=$1
+SUBCOMMAND=$2
 [ -z "$COMMAND" ] && COMMAND="run"
 
 case "$COMMAND" in
@@ -351,7 +341,7 @@ case "$COMMAND" in
     run_dev
     ;;
   build)
-    run_build
+    run_build "$@"
     ;;
   package)
     run_package

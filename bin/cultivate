@@ -253,14 +253,12 @@ run_build() {
   # Ensure Node dependencies
   setup_node
 
-  ########################################
-  # Build CSS entries individually (Tailwind processed)
-  ########################################
   $ENGINE exec -i \
     -e BUILD_PATH="$BASE_PATH" \
     "$NODE_CONTAINER" \
     npx vite build
-  finish_status "CSS files built and processed for $TARGET"
+
+  finish_status "Assets built and processed for $TARGET"
 }
 
 ########################################

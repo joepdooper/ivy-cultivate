@@ -9,9 +9,6 @@ trap 'echo -e "Error on line $LINENO"' ERR
 
 COMPOSE_FILE="./docker/docker-compose.yml"
 BASE_URL="http://localhost"
-ENTRY_FILE=".build/vite-entries.json"
-PACKAGE_DIR=".package"
-DIST_FILE="ivy-package.zip"
 
 PORTS=(
   ${SERVER_PORT:-8080}
@@ -243,14 +240,12 @@ run_build() {
 
   DIST_PATH="$BASE_PATH/dist"
 
-  # Remove old dist folder
   if [ -d "$DIST_PATH" ]; then
     rm -rf "$DIST_PATH"
     finish_status "Old dist folder removed for $TARGET"
   fi
   mkdir -p "$DIST_PATH"
 
-  # Ensure Node dependencies
   setup_node
 
   $ENGINE exec -i \
@@ -266,33 +261,19 @@ run_build() {
 ########################################
 
 run_package() {
+  # run_build
 
-  ########################################
-  # Step 1: Build assets
-  ########################################
-
-  run_build
-
-  ########################################
-  # Step 2: Prepare package directory
-  ########################################
+  PACKAGE_DIR=".package"
+  DIST_FILE="ivy-package.zip"
 
   rm -rf "$PACKAGE_DIR"
   mkdir -p "$PACKAGE_DIR"
-
-  ########################################
-  # Step 3: Copy required folders
-  ########################################
 
   cp -r public "$PACKAGE_DIR/"
   cp -r plugins "$PACKAGE_DIR/"
   cp -r templates "$PACKAGE_DIR/"
   cp -r routes "$PACKAGE_DIR/"
   cp -r language "$PACKAGE_DIR/"
-
-  ########################################
-  # Step 4: Copy required files
-  ########################################
 
   [ -f autoloader.php ] && cp autoloader.php "$PACKAGE_DIR/"
   [ -f .env ] && cp .env "$PACKAGE_DIR/"
@@ -301,26 +282,14 @@ run_package() {
 
   finish_status "Package files copied"
 
-  ########################################
-  # Step 5: Install production dependencies
-  ########################################
-
   (cd "$PACKAGE_DIR" && composer install --no-dev --optimize-autoloader)
 
   finish_status "Composer production dependencies installed"
-
-  ########################################
-  # Step 6: Create ZIP
-  ########################################
 
   rm -f "$DIST_FILE"
   (cd "$PACKAGE_DIR" && zip -r "../$DIST_FILE" . > /dev/null)
 
   finish_status "Package created: $DIST_FILE"
-
-  ########################################
-  # Step 7: Cleanup
-  ########################################
 
   rm -rf "$PACKAGE_DIR"
   finish_status "Temporary package folder removed"

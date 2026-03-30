@@ -7,7 +7,8 @@ trap 'echo -e "Error on line $LINENO"' ERR
 # Configuration
 ########################################
 
-COMPOSE_FILE="./docker/docker-compose.yml"
+COMPOSE_FILE_DOCKER="./docker/docker-compose.yml"
+COMPOSE_FILE_PODMAN="./docker/podman-compose.yml"
 BASE_URL="http://localhost"
 
 PORTS=(
@@ -61,16 +62,17 @@ fi
 # Engine Detection (Docker / Podman)
 ########################################
 
-if command -v docker >/dev/null 2>&1; then
-  ENGINE="docker"
-elif command -v podman >/dev/null 2>&1; then
+if command -v podman >/dev/null 2>&1; then
   ENGINE="podman"
+  COMPOSE_FILE="$COMPOSE_FILE_PODMAN"
+elif command -v docker >/dev/null 2>&1; then
+  ENGINE="docker"
+  COMPOSE_FILE="$COMPOSE_FILE_DOCKER"
 else
   echo "Neither Docker nor Podman is installed."
   exit 1
 fi
 
-# Compose command detection
 if $ENGINE compose version >/dev/null 2>&1; then
   COMPOSE_CMD="$ENGINE compose"
 else

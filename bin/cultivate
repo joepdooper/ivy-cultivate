@@ -23,7 +23,7 @@ CONTAINERS=(
   "${APACHE_HOST:-ivy_apache}"
   "${DB_HOST:-ivy_mysql}"
   "${NODE_HOST:-ivy_node}"
-  "${MAIL_HOST:-ivy_mailcatcher}"
+  "${MAIL_HOST:-ivy_mailpit}"
 )
 
 NODE_CONTAINER="${NODE_HOST:-ivy_node}"
@@ -205,7 +205,7 @@ run_dev() {
   ########################################
 
   echo ""
-  echo "Mailcatcher:      ${BASE_URL}:1080"
+  echo "Mailpit:      ${BASE_URL}:1080"
   echo "Vite Dev Server:  ${BASE_URL}:${VITE_PORT:-5173}"
   echo "Application:      ${BASE_URL}:${SERVER_PORT:-8080}"
   echo ""

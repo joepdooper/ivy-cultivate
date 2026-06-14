@@ -15,7 +15,7 @@ PORTS=(
   ${SERVER_PORT:-8080}
   ${DB_PORT:-3306}
   ${VITE_PORT:-5173}
-  1080
+  8025
   ${MAIL_PORT:-1025}
 )
 
@@ -205,9 +205,9 @@ run_dev() {
   ########################################
 
   echo ""
-  echo "Mailpit:      ${BASE_URL}:1080"
-  echo "Vite Dev Server:  ${BASE_URL}:${VITE_PORT:-5173}"
-  echo "Application:      ${BASE_URL}:${SERVER_PORT:-8080}"
+  echo "Mailpit:          ${BASE_URL}:8025"
+  echo "Vite:             ${BASE_URL}:${VITE_PORT:-5173}"
+  echo "Ivy:              ${BASE_URL}:${SERVER_PORT:-8080}"
   echo ""
 }
 

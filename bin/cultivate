@@ -26,6 +26,7 @@ CONTAINERS=(
   "${MAIL_HOST:-ivy_mailpit}"
 )
 
+PHP_CONTAINER="${APACHE_HOST:-ivy_apache}"
 NODE_CONTAINER="${NODE_HOST:-ivy_node}"
 
 GREEN="\033[0;32m"
@@ -143,7 +144,7 @@ check_ports() {
 }
 
 ########################################
-# Node Helpers (EXEC ONLY)
+# Node Helpers
 ########################################
 
 node_exec() {
@@ -163,10 +164,20 @@ setup_node() {
 }
 
 ########################################
+# PHP Helpers
+########################################
+
+php_exec() {
+  $ENGINE exec -i "$PHP_CONTAINER" "$@"
+}
+
+########################################
 # Dev Runner
 ########################################
 
 run_dev() {
+
+  php_exec composer install
 
   ########################################
   # Ports
@@ -302,7 +313,6 @@ run_package() {
 ########################################
 
 COMMAND=$1
-SUBCOMMAND=$2
 [ -z "$COMMAND" ] && COMMAND="run"
 
 case "$COMMAND" in

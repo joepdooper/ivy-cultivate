@@ -198,6 +198,7 @@ run_dev() {
   # Composer install
   #######################################
 
+  php_exec git config --global --add safe.directory /var/www
   php_exec git config --global --add safe.directory /var/ivy-roots
   php_exec git config --global --add safe.directory /var/ivy-sprout
   php_exec git config --global --add safe.directory /var/ivy-cultivate
